@@ -66,7 +66,7 @@ agent = Agent(
 )
 ```
 
-Every tool call produces signed `tool:start` and `tool:end` events through the Asqav API. Signatures use NIST FIPS 204 ML-DSA cryptography server-side, producing tamper-evident audit trails.
+Every tool call produces signed `tool:start` and `tool:end` events through the Asqav API. Signing runs server-side with NIST FIPS 204 ML-DSA cryptography, so the audit trail stays tamper-evident.
 
 ## Usage: stop a rogue agent before it acts
 
