@@ -20,8 +20,8 @@ Stop a rogue agent before it acts, and prove what it tried.
 
 This package gives you two surfaces:
 
-- **Hooks** (`AsqavRunHooks`, `AsqavAgentHooks`) sign `tool:start` and `tool:end` on the SDK's documented `RunHooks` / `AgentHooks` lifecycle. They observe and record, and they are fail-open: they never block tool execution.
-- **Guardrail** (`asqav_input_guardrail`) is the blocking surface. It signs each checked input and can stop a run before the agent acts by tripping the SDK tripwire when your predicate matches.
+- **Hooks**, namely `AsqavRunHooks` and `AsqavAgentHooks`, sign `tool:start` and `tool:end` on the SDK's documented `RunHooks` and `AgentHooks` lifecycle. They observe and record, and they are fail-open: they never block tool execution.
+- **Guardrail**, the `asqav_input_guardrail`, is the blocking surface. It signs each checked input and can stop a run before the agent acts by tripping the SDK tripwire when your predicate matches.
 
 ## Install
 
@@ -103,7 +103,7 @@ All hook signing is fail-open. If the Asqav API is unreachable, a warning is log
 
 `asqav-openai-agents` is a thin wrapper around the `asqav` Python SDK and inherits its mode behaviour:
 
-- **Asqav cloud (`*.asqav.com`):** the SDK hashes your action context locally and sends only the hash plus a small metadata bag. Raw prompts and tool arguments never leave your infrastructure.
+- **Asqav cloud on `*.asqav.com`:** the SDK hashes your action context locally and sends only the hash plus a small metadata bag. Raw prompts and tool arguments never leave your infrastructure.
 - **Self-hosted:** the SDK sends the full context so the server can run policy checks, PII redaction, and richer audit views.
 
 You can override per call:
