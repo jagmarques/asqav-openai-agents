@@ -18,6 +18,8 @@ Stop a rogue agent before it acts, and prove what it tried.
 
 `asqav-openai-agents` plugs [Asqav](https://asqav.com) into the [OpenAI Agents SDK](https://github.com/openai/openai-agents-python). Every tool your agent invokes produces a tamper-evident signed record of what it attempted, giving you cryptographic proof of agent behaviour for EU AI Act, DORA, and SOC 2 audits.
 
+Asqav governs the agents you wire through it. An agent that never routes through the governed path produces no receipt and is not detected.
+
 This package gives you two surfaces:
 
 - **Hooks**, namely `AsqavRunHooks` and `AsqavAgentHooks`, sign `tool:start` and `tool:end` on the SDK's documented `RunHooks` and `AgentHooks` lifecycle. They observe and record, and they are fail-open: they never block tool execution.
