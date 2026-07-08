@@ -9,5 +9,3 @@ build/
 .venv/
 venv/
 .env
-# Local development files kept out of the published tree
-CHANGELOG.md

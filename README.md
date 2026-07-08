@@ -27,13 +27,17 @@ This package gives you two surfaces:
 
 ## Install
 
-Not yet on PyPI. Install from GitHub:
+```bash
+pip install "asqav-openai-agents[agents]"
+```
+
+The OpenAI Agents SDK is a peer dependency. If you already have `openai-agents` installed you can drop the `[agents]` extra. If it is missing, the package raises a clear `ImportError` telling you to install it.
+
+If the PyPI release has not landed yet, install straight from GitHub instead:
 
 ```bash
 pip install "git+https://github.com/jagmarques/asqav-openai-agents.git#egg=asqav-openai-agents[agents]"
 ```
-
-The OpenAI Agents SDK is a peer dependency. If you already have `openai-agents` installed you can drop the `[agents]` extra. If it is missing, the package raises a clear `ImportError` telling you to install it.
 
 ## Usage: sign every tool call
 
