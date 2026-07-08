@@ -3,6 +3,7 @@ mocked; no network access occurs."""
 
 from __future__ import annotations
 
+from typing import get_origin
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -47,7 +48,10 @@ class TestAsqavRunHooks:
 
         from asqav_openai_agents import AsqavRunHooks
 
-        assert isinstance(AsqavRunHooks(agent_name="t"), RunHooks)
+        # RunHooks is a subscripted generic on newer SDK releases; isinstance
+        # needs the unparameterized origin class.
+        run_hooks_class = get_origin(RunHooks) or RunHooks
+        assert isinstance(AsqavRunHooks(agent_name="t"), run_hooks_class)
 
     @pytest.mark.asyncio
     async def test_on_tool_start_signs(self, mock_asqav: MagicMock):
@@ -88,7 +92,10 @@ class TestAsqavAgentHooks:
 
         from asqav_openai_agents import AsqavAgentHooks
 
-        assert isinstance(AsqavAgentHooks(agent_name="t"), AgentHooks)
+        # AgentHooks is a subscripted generic on newer SDK releases; isinstance
+        # needs the unparameterized origin class.
+        agent_hooks_class = get_origin(AgentHooks) or AgentHooks
+        assert isinstance(AsqavAgentHooks(agent_name="t"), agent_hooks_class)
 
     @pytest.mark.asyncio
     async def test_on_tool_start_signs(self, mock_asqav: MagicMock):
