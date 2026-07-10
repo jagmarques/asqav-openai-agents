@@ -24,13 +24,14 @@ logger = logging.getLogger("asqav")
 class _AsqavSigningMixin(AsqavAdapter):
     """Shared signing logic for the run-level and agent-level hook classes.
 
-    Both ``on_tool_start`` and ``on_tool_end`` are async to match the SDK's
-    hook protocol, but ``_sign_action`` itself is a fast fail-open call.
+    ``on_tool_start`` and ``on_tool_end`` are async hooks, so signing goes
+    through ``_sign_action_async`` to keep the blocking HTTP round trip off the
+    event loop. All signing is fail-open.
     """
 
     async def _sign_tool_start(self, agent: Any, tool: Tool) -> None:
         try:
-            self._sign_action(
+            await self._sign_action_async(
                 "tool:start",
                 {
                     "tool": getattr(tool, "name", type(tool).__name__),
@@ -42,7 +43,7 @@ class _AsqavSigningMixin(AsqavAdapter):
 
     async def _sign_tool_end(self, agent: Any, tool: Tool, result: object) -> None:
         try:
-            self._sign_action(
+            await self._sign_action_async(
                 "tool:end",
                 {
                     "tool": getattr(tool, "name", type(tool).__name__),

@@ -8,7 +8,9 @@ the SDK and the agent never runs."""
 
 from __future__ import annotations
 
+import inspect
 import logging
+from collections.abc import Awaitable
 from typing import Any, Callable
 
 from asqav.extras._base import AsqavAdapter
@@ -30,12 +32,43 @@ logger = logging.getLogger("asqav")
 _MAX_LEN = 200
 
 
+def _field(obj: Any, name: str) -> Any:
+    """Read ``name`` from a dict item or fall back to an object attribute."""
+    if isinstance(obj, dict):
+        return obj.get(name)
+    return getattr(obj, name, None)
+
+
+def _content_text(content: Any) -> str:
+    """Text of one message ``content``: a plain string or a list of parts."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = [t for t in (_field(p, "text") for p in content) if isinstance(t, str)]
+        return "\n".join(parts)
+    return ""
+
+
+def _input_to_text(value: Any) -> str:
+    """Flatten a guardrail input to the text the predicate should see.
+
+    The SDK passes ``str | list[TResponseInputItem]``. For a message list, feed
+    the real message text to the predicate, never the list's Python repr.
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        chunks = [_content_text(_field(item, "content")) for item in value]
+        return "\n".join(c for c in chunks if c)
+    return str(value)
+
+
 class _AsqavGuardrail(AsqavAdapter):
     """Holds the Asqav agent, the caller's block predicate, and fail-closed policy."""
 
     def __init__(
         self,
-        block_if: Callable[[str], bool],
+        block_if: Callable[[str], bool | Awaitable[bool]],
         *,
         api_key: str | None = None,
         agent_name: str | None = None,
@@ -52,10 +85,13 @@ class _AsqavGuardrail(AsqavAdapter):
         agent: Any,
         input: Any,
     ) -> GuardrailFunctionOutput:
-        text = input if isinstance(input, str) else str(input)
+        text = _input_to_text(input)
         predicate_error: str | None = None
         try:
-            blocked = bool(self._block_if(text))
+            decision = self._block_if(text)
+            if inspect.isawaitable(decision):
+                decision = await decision
+            blocked = bool(decision)
         except Exception as exc:
             # The decision function itself errored. Fail closed by default so an
             # adversarial input cannot slip past by making the predicate throw.
@@ -74,7 +110,7 @@ class _AsqavGuardrail(AsqavAdapter):
         if predicate_error is not None:
             payload["predicate_error"] = predicate_error
         try:
-            self._sign_action("input:check", payload)
+            await self._sign_action_async("input:check", payload)
         except Exception as exc:
             logger.warning("asqav input:check signing failed (fail-open): %s", exc)
         return GuardrailFunctionOutput(
@@ -84,7 +120,7 @@ class _AsqavGuardrail(AsqavAdapter):
 
 
 def asqav_input_guardrail(
-    block_if: Callable[[str], bool],
+    block_if: Callable[[str], bool | Awaitable[bool]],
     *,
     api_key: str | None = None,
     agent_name: str | None = None,
@@ -98,6 +134,7 @@ def asqav_input_guardrail(
 
     Args:
         block_if: Predicate over the input text; returning True blocks the run.
+            May be sync or async; an async predicate is awaited.
         api_key: Optional API key override (uses ``asqav.init()`` default).
         agent_name: Name for an Asqav agent (calls ``Agent.create``).
         agent_id: ID of an existing Asqav agent (calls ``Agent.get``).
