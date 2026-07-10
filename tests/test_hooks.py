@@ -135,3 +135,44 @@ class TestAsqavInputGuardrail:
         g = asqav_input_guardrail(lambda t: False, agent_name="test-agent")
         out = await g.guardrail_function(MagicMock(), _agent(), "all good")
         assert out.tripwire_triggered is False
+
+    @pytest.mark.asyncio
+    async def test_fails_closed_when_predicate_raises(self, mock_asqav: MagicMock):
+        # A raising decision function must DENY (trip the tripwire) by default,
+        # not silently allow the run through (the fail-open bypass).
+        from asqav_openai_agents import asqav_input_guardrail
+
+        def boom(_text: str) -> bool:
+            raise ValueError("predicate blew up")
+
+        g = asqav_input_guardrail(boom, agent_name="test-agent")
+        out = await g.guardrail_function(MagicMock(), _agent(), "anything")
+        assert out.tripwire_triggered is True
+
+    @pytest.mark.asyncio
+    async def test_fail_closed_receipt_records_predicate_error(self, mock_asqav: MagicMock):
+        from asqav_openai_agents import asqav_input_guardrail
+
+        def boom(_text: str) -> bool:
+            raise ValueError("predicate blew up")
+
+        g = asqav_input_guardrail(boom, agent_name="test-agent")
+        guard_fn = g.guardrail_function
+        with patch.object(guard_fn, "_sign_action", wraps=guard_fn._sign_action) as spy:
+            out = await guard_fn(MagicMock(), _agent(), "anything")
+            assert out.tripwire_triggered is True
+            assert spy.call_args.args[0] == "input:check"
+            assert spy.call_args.args[1]["blocked"] is True
+            assert "predicate_error" in spy.call_args.args[1]
+
+    @pytest.mark.asyncio
+    async def test_fail_open_opt_allows_when_predicate_raises(self, mock_asqav: MagicMock):
+        # Back-compat escape hatch: fail_closed=False restores the old allow-through.
+        from asqav_openai_agents import asqav_input_guardrail
+
+        def boom(_text: str) -> bool:
+            raise ValueError("predicate blew up")
+
+        g = asqav_input_guardrail(boom, agent_name="test-agent", fail_closed=False)
+        out = await g.guardrail_function(MagicMock(), _agent(), "anything")
+        assert out.tripwire_triggered is False
