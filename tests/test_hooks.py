@@ -3,10 +3,27 @@ mocked; no network access occurs."""
 
 from __future__ import annotations
 
+import asyncio
+import socket
 from typing import get_origin
 from unittest.mock import MagicMock, patch
 
 import pytest
+from agents import (
+    Agent,
+    FunctionTool,
+    InputGuardrailTripwireTriggered,
+    Model,
+    RunConfig,
+    Runner,
+)
+from agents.items import ModelResponse
+from agents.usage import Usage
+from openai.types.responses import (
+    ResponseFunctionToolCall,
+    ResponseOutputMessage,
+    ResponseOutputText,
+)
 
 
 @pytest.fixture()
@@ -259,3 +276,97 @@ class TestGuardrailInputHandling:
         g_deny = asqav_input_guardrail(deny, agent_name="test-agent")
         out_deny = await g_deny.guardrail_function(MagicMock(), _agent(), "hello")
         assert out_deny.tripwire_triggered is True
+
+
+class _ToolCallingModel(Model):
+    """Local model double; the real Runner dispatches its requested tool call."""
+
+    def __init__(self, events: list[str]):
+        self.events = events
+        self.calls = 0
+
+    async def get_response(self, *args, **kwargs):
+        self.calls += 1
+        self.events.append("model")
+        if self.calls == 1:
+            output = [ResponseFunctionToolCall(
+                id="tool_call_1", call_id="call_1", name="record_effect",
+                arguments="{}", type="function_call",
+            )]
+        else:
+            output = [ResponseOutputMessage(
+                id="message_1", role="assistant", status="completed", type="message",
+                content=[ResponseOutputText(text="done", annotations=[], type="output_text")],
+            )]
+        return ModelResponse(output=output, usage=Usage(), response_id=None)
+
+    def stream_response(self, *args, **kwargs):
+        raise AssertionError("This test uses Runner.run, not streaming")
+
+
+class TestRunnerInputGuardrail:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("signing_fails", [False, True])
+    @pytest.mark.parametrize("mode,fail_closed,blocked", [
+        ("deny", True, True),
+        ("permit", True, False),
+        ("error", True, True),
+        ("error", False, False),
+    ])
+    async def test_slow_predicate_finishes_before_model_or_tool_execution(
+        self, mock_asqav, monkeypatch, mode, fail_closed, blocked, signing_fails,
+    ):
+        from asqav_openai_agents import asqav_input_guardrail
+
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+        def reject_network(*_args, **_kwargs):
+            raise AssertionError("Runner ordering tests must not access the network")
+
+        monkeypatch.setattr(socket.socket, "connect", reject_network)
+        events: list[str] = []
+        tool_calls = 0
+
+        async def predicate(_text: str) -> bool:
+            events.append("predicate:start")
+            # Give a speculative model call time to start if blocking mode is removed.
+            await asyncio.sleep(0.03)
+            events.append("predicate:finish")
+            if mode == "error":
+                raise ValueError("predicate unavailable")
+            return mode == "deny"
+
+        async def record_effect(_context, _arguments):
+            nonlocal tool_calls
+            tool_calls += 1
+            events.append("tool")
+            return "recorded"
+
+        if signing_fails:
+            mock_asqav.sign.side_effect = RuntimeError("signer unavailable")
+        model = _ToolCallingModel(events)
+        tool = FunctionTool(
+            name="record_effect", description="Record a test side effect",
+            params_json_schema={"type": "object", "properties": {}, "additionalProperties": False},
+            on_invoke_tool=record_effect,
+        )
+        agent = Agent(
+            name="guarded", model=model, tools=[tool],
+            input_guardrails=[asqav_input_guardrail(
+                predicate, agent_name="audit-agent", fail_closed=fail_closed,
+            )],
+        )
+        config = RunConfig(tracing_disabled=True)
+        if blocked:
+            with pytest.raises(InputGuardrailTripwireTriggered):
+                await Runner.run(agent, "test input", run_config=config)
+            assert model.calls == 0
+            assert tool_calls == 0
+            assert events == ["predicate:start", "predicate:finish"]
+        else:
+            result = await Runner.run(agent, "test input", run_config=config)
+            assert result.final_output == "done"
+            assert model.calls == 2
+            assert tool_calls == 1
+            assert events == ["predicate:start", "predicate:finish", "model", "tool", "model"]
+        mock_asqav.sign.assert_called_once()
