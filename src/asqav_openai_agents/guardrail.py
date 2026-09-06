@@ -1,10 +1,10 @@
 """Optional Asqav input guardrail for the OpenAI Agents SDK.
 
-Signs an ``input:check`` event and can stop a run before the agent acts by
-tripping the guardrail tripwire when a caller-supplied predicate matches.
-Unlike the hooks (which are fail-open observability), this is the blocking
-surface: a tripped tripwire raises ``InputGuardrailTripwireTriggered`` inside
-the SDK and the agent never runs."""
+Checks the initial input before the first agent's model call and attempts to
+sign an ``input:check`` event. A matching predicate raises the SDK's
+``InputGuardrailTripwireTriggered`` exception before that agent runs. Signing
+failures do not change the predicate's decision. Input guardrails do not check
+each tool call or run again on handoffs."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ try:
 except ImportError as err:
     raise ImportError(
         "asqav-openai-agents requires the openai-agents SDK. "
-        "Install with: pip install asqav-openai-agents"
+        'Install with: pip install "asqav-openai-agents[agents]"'
     ) from err
 
 logger = logging.getLogger("asqav")
@@ -127,8 +127,10 @@ def asqav_input_guardrail(
     agent_id: str | None = None,
     fail_closed: bool = True,
 ) -> InputGuardrail[Any]:
-    """Build an ``InputGuardrail`` that signs each checked input and trips the
-    tripwire (blocking the run) when ``block_if(input_text)`` returns True.
+    """Check initial input before the first agent's model call.
+
+    Attempt to sign each check and block when ``block_if(input_text)`` returns True.
+    Signing failures do not allow a blocked input through.
 
     Pass the result to ``Agent(..., input_guardrails=[asqav_input_guardrail(...)])``.
 
@@ -139,8 +141,8 @@ def asqav_input_guardrail(
         agent_name: Name for an Asqav agent (calls ``Agent.create``).
         agent_id: ID of an existing Asqav agent (calls ``Agent.get``).
         fail_closed: When ``block_if`` raises, block the run (trip the tripwire)
-            instead of allowing it, and record the error on the signed receipt.
-            Defaults to True. Set False to keep the old allow-on-error behaviour.
+            instead of allowing it, and include the error in the signing attempt.
+            Defaults to True. Set False to allow the input on predicate errors.
     """
     guard = _AsqavGuardrail(
         block_if,
@@ -149,4 +151,8 @@ def asqav_input_guardrail(
         agent_id=agent_id,
         fail_closed=fail_closed,
     )
-    return InputGuardrail(guardrail_function=guard, name="asqav_input_guardrail")
+    return InputGuardrail(
+        guardrail_function=guard,
+        name="asqav_input_guardrail",
+        run_in_parallel=False,
+    )

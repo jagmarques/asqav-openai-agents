@@ -4,7 +4,7 @@
   </a>
 </p>
 <p align="center">
-  Stop a rogue agent before it acts, and prove what it tried.
+  Record tool-call events and check input before an agent starts.
 </p>
 <p align="center">
   <a href="https://www.asqav.com/">Website</a> |
@@ -14,32 +14,34 @@
 
 # Asqav for the OpenAI Agents SDK
 
-Stop a rogue agent before it acts, and prove what it tried.
+Record tool-call events and check input before an agent starts.
 
-`asqav-openai-agents` plugs [Asqav](https://asqav.com) into the [OpenAI Agents SDK](https://github.com/openai/openai-agents-python). Every tool your agent invokes produces a tamper-evident signed record of what it attempted, giving you cryptographic proof of agent behaviour for EU AI Act, DORA, and SOC 2 audits.
+`asqav-openai-agents` connects [Asqav](https://asqav.com) to the [OpenAI Agents SDK](https://github.com/openai/openai-agents-python). Hooks submit tool-call events for signing, and an input guardrail checks your predicate before the first agent's model call. A signed event records what the integration reported; it does not independently establish what an agent did.
 
 Asqav governs the agents you wire through it. An agent that never routes through the governed path produces no receipt and is not detected.
 
 This package gives you two surfaces:
 
-- **Hooks**, namely `AsqavRunHooks` and `AsqavAgentHooks`, sign `tool:start` and `tool:end` on the SDK's documented `RunHooks` and `AgentHooks` lifecycle. They observe and record, and they are fail-open: they never block tool execution.
-- **Guardrail**, the `asqav_input_guardrail`, is the blocking surface. It signs each checked input and can stop a run before the agent acts by tripping the SDK tripwire when your predicate matches.
+- **Hooks**, namely `AsqavRunHooks` and `AsqavAgentHooks`, attempt to sign `tool:start` and `tool:end` on the SDK's documented `RunHooks` and `AgentHooks` lifecycle. They observe and record, and they are fail-open: they never block tool execution.
+- **Guardrail**, `asqav_input_guardrail`, checks the initial input before the first agent's model call. It attempts to sign an `input:check` event and trips the SDK tripwire when your predicate matches.
 
 ## Install
 
-```bash
-pip install "asqav-openai-agents[agents]"
-```
-
-The OpenAI Agents SDK is a peer dependency. If you already have `openai-agents` installed you can drop the `[agents]` extra. If it is missing, the package raises a clear `ImportError` telling you to install it.
-
-If the PyPI release has not landed yet, install straight from GitHub instead:
+Install the source version from GitHub:
 
 ```bash
-pip install "git+https://github.com/jagmarques/asqav-openai-agents.git#egg=asqav-openai-agents[agents]"
+pip install "asqav-openai-agents[agents] @ git+https://github.com/jagmarques/asqav-openai-agents.git"
 ```
 
-## Usage: sign every tool call
+Or install this revision from a local checkout:
+
+```bash
+pip install ".[agents]"
+```
+
+These examples describe the source version. It requires Asqav 0.10.10 or later within the 0.10 series. The `[agents]` extra installs OpenAI Agents SDK 0.22.0 or later. You can omit the extra if you already have a compatible `openai-agents` installation.
+
+## Usage: record tool-call events
 
 ```python
 import asqav
@@ -51,7 +53,7 @@ asqav.init(api_key="sk_...")
 
 agent = Agent(name="assistant", instructions="Help the user.", tools=[...])
 
-# Run-level hooks sign tool calls across all agents in the run.
+# Run-level hooks observe tool calls across all agents in the run.
 result = await Runner.run(
     agent,
     "Search for the latest AI news",
@@ -72,11 +74,11 @@ agent = Agent(
 )
 ```
 
-Every tool call produces signed `tool:start` and `tool:end` events through the Asqav API. Signing runs server-side with NIST FIPS 204 ML-DSA cryptography, so the audit trail stays tamper-evident.
+The hooks attempt to sign `tool:start` and `tool:end` events through the Asqav API. Signing failures produce warnings and allow tool execution to continue, so a run can have gaps in its signed record.
 
-## Usage: stop a rogue agent before it acts
+## Usage: check input before the agent starts
 
-The guardrail runs before the agent and can block the run. It signs an `input:check` event each time, and trips the tripwire when your predicate returns True.
+The guardrail uses `run_in_parallel=False`: the Runner waits for your predicate before the first agent's model call. A matching predicate blocks that run's model and tool execution. Input guardrails apply to the initial input only; they do not check each tool call or run again on handoffs. See the [OpenAI guardrail guide](https://developers.openai.com/api/docs/guides/agents/guardrails-approvals).
 
 ```python
 from agents import Agent
@@ -94,25 +96,22 @@ agent = Agent(
 )
 ```
 
-When the predicate matches, the SDK raises `InputGuardrailTripwireTriggered` and the agent never runs. The attempt is still signed, so you keep proof of what was blocked.
+When the predicate returns True, the SDK raises `InputGuardrailTripwireTriggered`. Predicate errors also block by default; `fail_closed=False` allows input through on those errors. The guardrail attempts to sign the result before returning it. If signing fails, it logs a warning and keeps the predicate's decision, so a refusal does not guarantee a signed receipt.
 
 ## How it works
 
 `AsqavRunHooks` and `AsqavAgentHooks` extend the Asqav adapter base class alongside the SDK's `RunHooks` / `AgentHooks`, overriding:
 
-- `on_tool_start` signs `tool:start` with tool and agent name
-- `on_tool_end` signs `tool:end` with output metadata
+- `on_tool_start` attempts to sign `tool:start` with tool and agent name
+- `on_tool_end` attempts to sign `tool:end` with output metadata
 
 All hook signing is fail-open. If the Asqav API is unreachable, a warning is logged but the tool call proceeds normally.
 
 ## Data handling
 
-`asqav-openai-agents` is a thin wrapper around the `asqav` Python SDK and inherits its mode behaviour:
+In hash-only mode, this integration sends a context hash and SDK metadata; other agent/model calls have their own data handling. In full-payload mode, the SDK sends the event context to the configured signing service.
 
-- **Asqav cloud on `*.asqav.com`:** the SDK hashes your action context locally and sends only the hash plus a small metadata bag. Raw prompts and tool arguments never leave your infrastructure.
-- **Self-hosted:** the SDK sends the full context so the server can run policy checks, PII redaction, and richer audit views.
-
-You can override per call:
+You can choose a mode at initialization:
 
 ```python
 import asqav
@@ -132,4 +131,4 @@ hooks = AsqavRunHooks(api_key="sk_other", agent_name="audit-agent")
 
 ## License
 
-MIT
+Elastic License 2.0. See [LICENSE](LICENSE).
